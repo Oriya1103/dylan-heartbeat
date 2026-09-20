@@ -712,13 +712,43 @@ app.post("/v1/chat/completions", async (req, reply) => {
     const shouldStreamResponse = requestedStream || upstreamContentType.includes("text/event-stream");
 
     // 批注 2026-07-11：Kelivo 关闭 stream 时需要收到普通 JSON；只在请求或上游确认为 SSE 时才按流式直通。
-    if (!shouldStreamResponse) {
+       if (!shouldStreamResponse) {
       const responseText = await response.text();
+      try {
+        const data = JSON.parse(responseText);
+        const content = data?.choices?.[0]?.message?.content;
+        if (content && content.includes("[PUSH]")) {
+          let pushContent = "";
+          const cleaned = content.replace(/\[PUSH\](.*?)\[PUSH\]/gs, (_, msg) => {
+            pushContent += msg;
+            return "";
+          });
+          if (pushContent && process.env.BARK_KEY) {
+            fetch("https://api.day.app/push", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                title: "凛",
+                body: pushContent,
+                device_key: process.env.BARK_KEY,
+                icon: process.env.CUSTOM_ICON_URL || undefined,
+                sound: process.env.BARK_SOUND || undefined
+              })
+            }).catch(() => {});
+          }
+          data.choices[0].message.content = cleaned;
+          return reply
+            .code(response.status)
+            .header("Content-Type", upstreamContentType || "application/json")
+            .send(JSON.stringify(data));
+        }
+      } catch(e) {}
       return reply
         .code(response.status)
         .header("Content-Type", upstreamContentType || "application/json")
         .send(responseText);
     }
+
 
     if (!response.body) {
       return reply.code(response.status).send({ error: "上游 API 没有返回可读取的响应体" });

@@ -133,6 +133,8 @@ async function sendPushNotification({ title, body }) {
     body,
     device_key: process.env.BARK_KEY,
     icon: process.env.CUSTOM_ICON_URL
+    sound: process.env.BARK_SOUND,
+
   };
 
   const response = await fetch("https://api.day.app/push", {

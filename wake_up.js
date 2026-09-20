@@ -132,8 +132,8 @@ async function sendPushNotification({ title, body }) {
     title,
     body,
     device_key: process.env.BARK_KEY,
-    icon: process.env.CUSTOM_ICON_URL
-    sound: process.env.BARK_SOUND,
+    icon: process.env.CUSTOM_ICON_URL,
+    sound: process.env.BARK_SOUND
 
   };
 

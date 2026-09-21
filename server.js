@@ -517,6 +517,30 @@ function loadEnvFileObject() {
   return result;
 }
 
+
+// 发送 Bark 推送（聊天中 [PUSH] 拦截用）
+async function sendBarkPush(title, body) {
+  const barkKey = readEnvValue("BARK_KEY");
+  if (!barkKey) return;
+  const iconUrl = readEnvValue("CUSTOM_ICON_URL") || "";
+  const barkSound = process.env.BARK_SOUND || "";
+  try {
+    await fetch("https://api.day.app/push", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        device_key: barkKey,
+        title: title || "凛",
+        body: body || "",
+        ...(iconUrl ? { icon: iconUrl } : {}),
+        ...(barkSound ? { sound: barkSound } : {})
+      }),
+      signal: AbortSignal.timeout(10000)
+    });
+  } catch (e) {
+    console.error("Bark push failed:", e.message);
+  }
+}
 function serializeEnvValue(value) {
   return String(value ?? "").replace(/\r?\n/g, "\\n");
 }
@@ -745,10 +769,31 @@ app.post("/v1/chat/completions", async (req, reply) => {
     // 批注 2026-07-11：Kelivo 关闭 stream 时需要收到普通 JSON；只在请求或上游确认为 SSE 时才按流式直通。
     if (!shouldStreamResponse) {
       const responseText = await response.text();
-      return reply
-        .code(response.status)
-        .header("Content-Type", upstreamContentType || "application/json")
-        .send(responseText);
+      // 拦截 [PUSH]内容[PUSH]：发送Bark并从Kelivo显示中删除
+      try {
+        const parsed = JSON.parse(responseText);
+        const msgContent = parsed.choices && parsed.choices[0] && parsed.choices[0].message && parsed.choices[0].message.content;
+        if (typeof msgContent === "string" && msgContent.includes("[PUSH]")) {
+          const pushMatch = msgContent.match(/\[PUSH\]([\s\S]*?)\[PUSH\]/);
+          if (pushMatch) {
+            const pushText = pushMatch[1].trim();
+            const plines = pushText.split("\n").filter(l => l.trim());
+            const pTitle = plines.length > 1 ? plines[0].trim() : "凛";
+            const pBody = plines.length > 1 ? plines.slice(1).join(" ") : plines[0];
+            await sendBarkPush(pTitle, pBody);
+            parsed.choices[0].message.content = msgContent.replace(/\[PUSH\][\s\S]*?\[PUSH\]/g, "").trim();
+          }
+        }
+        return reply
+          .code(response.status)
+          .header("Content-Type", upstreamContentType || "application/json")
+          .send(JSON.stringify(parsed));
+      } catch (e) {
+        return reply
+          .code(response.status)
+          .header("Content-Type", upstreamContentType || "application/json")
+          .send(responseText);
+      }
     }
 
     if (!response.body) {

@@ -623,7 +623,7 @@ app.post("/v1/chat/completions", async (req, reply) => {
     const _now2 = new Date();
     const _p2 = n => String(n).padStart(2, '0');
     const _wd = ['星期日','星期一','星期二','星期三','星期四','星期五','星期六'][_now2.getDay()];
-    llmMessages.unshift({ role: 'system', content: [系统时间] 今天是年月日  :。请根据这个时间回复，不要搞错日期。 });
+    llmMessages.unshift({ role: 'system', content: "[系统时间] 今天是年月日  :。请根据这个时间回复，不要搞错日期。" });
     const oldEvents = stripPosition(
       oldTimeline.filter(isSpecialEvent).sort((a, b) => {
         const timeA = extractTimestampWithMemory(a, tsDB);

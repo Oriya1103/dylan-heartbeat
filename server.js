@@ -326,6 +326,18 @@ function buildTimeline(kelivoMessages, tsDB) {
     .filter(isRealMessageForTimeline)
     .map(normalizeMessageForTimeline);
 
+  // 补丁：Kelivo 不带时间前缀时，给最后一条用户消息补上当前时间，
+  // 让 wake_up 能判断"用户多久没说话"。只补最后一条，历史消息保持原样。
+  const lastUserIdx = newRealMessages.map(m => m.role === "user").lastIndexOf(true);
+  if (lastUserIdx !== -1) {
+    const lastUserMsg = newRealMessages[lastUserIdx];
+    const lastUserText = normalizeContentToText(lastUserMsg.content);
+    if (lastUserText && !parseTimestampLabel(lastUserText)) {
+      const formattedTime = formatDateTimeInTimeZone(new Date(), TIME_ZONE);
+      newRealMessages[lastUserIdx] = { ...lastUserMsg, content: `${formattedTime} ${lastUserText}` };
+    }
+  }
+
   const oldSpecialEvents = oldTimeline.filter(isSpecialEvent).sort((a, b) => {
     const timeA = extractTimestampWithMemory(a, tsDB);
     const timeB = extractTimestampWithMemory(b, tsDB);
@@ -384,6 +396,20 @@ function buildTimeline(kelivoMessages, tsDB) {
     const lastRealPos = realPos - 1;
     for (let i = 0; i < pendingSpecial.length; i++) {
       finalMessages.push({ ...pendingSpecial[i], position: parseFloat((lastRealPos + 0.3 * (i + 1)).toFixed(4)) });
+    }
+  }
+
+  // 补丁：给最后一条用户消息加时间戳，让 wake_up.js 能判断沉默时间
+  const _now = new Date();
+  const _p = n => String(n).padStart(2, '0');
+  const _ts = `（-- :）`;
+  for (let _i = finalMessages.length - 1; _i >= 0; _i--) {
+    if (finalMessages[_i].role === 'user') {
+      const _t = normalizeContentToText(finalMessages[_i].content);
+      if (!_t.match(/\d{4}[-/]\d{1,2}[-/]\d{1,2}\s*\d{1,2}[:：]\d{2}/)) {
+        finalMessages[_i] = { ...finalMessages[_i], content: `` };
+      }
+      break;
     }
   }
 
@@ -593,6 +619,11 @@ app.post("/v1/chat/completions", async (req, reply) => {
       .map(prepareMessageForLLM)
       .filter(Boolean);
 
+    // 补丁：注入当前时间，让模型知道现在几点几号
+    const _now2 = new Date();
+    const _p2 = n => String(n).padStart(2, '0');
+    const _wd = ['星期日','星期一','星期二','星期三','星期四','星期五','星期六'][_now2.getDay()];
+    llmMessages.unshift({ role: 'system', content: [系统时间] 今天是年月日  :。请根据这个时间回复，不要搞错日期。 });
     const oldEvents = stripPosition(
       oldTimeline.filter(isSpecialEvent).sort((a, b) => {
         const timeA = extractTimestampWithMemory(a, tsDB);
@@ -712,43 +743,13 @@ app.post("/v1/chat/completions", async (req, reply) => {
     const shouldStreamResponse = requestedStream || upstreamContentType.includes("text/event-stream");
 
     // 批注 2026-07-11：Kelivo 关闭 stream 时需要收到普通 JSON；只在请求或上游确认为 SSE 时才按流式直通。
-       if (!shouldStreamResponse) {
+    if (!shouldStreamResponse) {
       const responseText = await response.text();
-      try {
-        const data = JSON.parse(responseText);
-        const content = data?.choices?.[0]?.message?.content;
-        if (content && content.includes("[PUSH]")) {
-          let pushContent = "";
-          const cleaned = content.replace(/\[PUSH\](.*?)\[PUSH\]/gs, (_, msg) => {
-            pushContent += msg;
-            return "";
-          });
-          if (pushContent && process.env.BARK_KEY) {
-            fetch("https://api.day.app/push", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                title: "凛",
-                body: pushContent,
-                device_key: process.env.BARK_KEY,
-                icon: process.env.CUSTOM_ICON_URL || undefined,
-                sound: process.env.BARK_SOUND || undefined
-              })
-            }).catch(() => {});
-          }
-          data.choices[0].message.content = cleaned;
-          return reply
-            .code(response.status)
-            .header("Content-Type", upstreamContentType || "application/json")
-            .send(JSON.stringify(data));
-        }
-      } catch(e) {}
       return reply
         .code(response.status)
         .header("Content-Type", upstreamContentType || "application/json")
         .send(responseText);
     }
-
 
     if (!response.body) {
       return reply.code(response.status).send({ error: "上游 API 没有返回可读取的响应体" });

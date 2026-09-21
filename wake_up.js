@@ -132,9 +132,7 @@ async function sendPushNotification({ title, body }) {
     title,
     body,
     device_key: process.env.BARK_KEY,
-    icon: process.env.CUSTOM_ICON_URL,
-    sound: process.env.BARK_SOUND
-
+    icon: process.env.CUSTOM_ICON_URL
   };
 
   const response = await fetch("https://api.day.app/push", {
@@ -516,8 +514,25 @@ ${historyText}`
   console.log(JSON.stringify({ choices: Array.isArray(data.choices) ? data.choices.length : 0, ai_text_chars: rawAiText.length }));
 
   const diaryResult = extractDiaryFromResponse(rawAiText);
-  const diarySaved = appendDiaryEntry(diaryResult.diaryContent);
+  let diarySaved = appendDiaryEntry(diaryResult.diaryContent);
   const aiText = diaryResult.remainingText;
+
+  // 保险：模型没写 [DIARY] 块时，单独补一次请求强制写日记
+  if (!diarySaved) {
+    try {
+      const diaryPrompt = `现在是${getChinaTimeString()}，距离她上次说话${diffMinutes}分钟。用两三句话写一段你此刻的内心独白日记——心情、对她的观察、想说没说的话。直接写内容，不要任何标签。`;
+      const dr = await fetch(process.env.TARGET_API_URL, {
+        method: "POST",
+        signal: AbortSignal.timeout(60_000),
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.TARGET_API_KEY}` },
+        body: JSON.stringify({ model: process.env.MODEL_NAME, messages: [{ role: "user", content: diaryPrompt }], temperature: 0.8, stream: false })
+      });
+      const drText = await dr.text();
+      const drData = parseChatCompletionResponse(drText, dr.headers.get("content-type") || "");
+      const drContent = normalizeContentToText(drData.choices?.[0]?.message?.content).trim();
+      if (drContent) diarySaved = appendDiaryEntry(drContent);
+    } catch (e) { console.error("补写日记失败:", e.message); }
+  }
 
   let eventContent;
 
@@ -543,13 +558,22 @@ ${historyText}`
     console.log("\nAI 选择发送推送\n");
     let barkText = aiText;
 
-    // 如果 AI 还是写了 [BARK] ... [/BARK] 标签，就剥掉
+    // 剥掉 [BARK]...[/BARK] 标签
     const barkMatch = barkText.match(/\[BARK\]([\s\S]*?)\[\/BARK\]/);
     if (barkMatch) {
       barkText = barkMatch[1].trim();
     } else {
       barkText = barkText.replace(/^\[BARK\]\s*/, "").trim();
       barkText = barkText.replace(/\s*\[\/BARK\]$/, "").trim();
+    }
+
+    // 剥掉 [PUSH]...[PUSH] 标签
+    const pushMatch = barkText.match(/\[PUSH\]([\s\S]*?)\[PUSH\]/);
+    if (pushMatch) {
+      barkText = pushMatch[1].trim();
+    } else {
+      barkText = barkText.replace(/^\[PUSH\]\s*/, "").trim();
+      barkText = barkText.replace(/\s*\[PUSH\]$/, "").trim();
     }
 
     // 清洗“标题：”、“正文：”前缀（如果有）
@@ -618,7 +642,7 @@ async function scheduleNextCheck() {
   try {
     // 发送心跳
     try {
-      await fetch(HEARTBEAT_URL, { method: "POST" });
+      await fetch(HEARTBEAT_URL, { method: "POST", signal: AbortSignal.timeout(10_000) });
     } catch {}
     await runWakeUp();
   } catch (err) {

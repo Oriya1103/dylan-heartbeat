@@ -774,14 +774,14 @@ app.post("/v1/chat/completions", async (req, reply) => {
         const parsed = JSON.parse(responseText);
         const msgContent = parsed.choices && parsed.choices[0] && parsed.choices[0].message && parsed.choices[0].message.content;
         if (typeof msgContent === "string" && msgContent.includes("[PUSH]")) {
-          const pushMatch = msgContent.match(/\[PUSH\]([\s\S]*?)\[PUSH\]/);
+          const pushMatch = msgContent.match(/\[PUSH\]([\s\S]*?)\[\/?PUSH\]/);
           if (pushMatch) {
             const pushText = pushMatch[1].trim();
             const plines = pushText.split("\n").filter(l => l.trim());
             const pTitle = plines.length > 1 ? plines[0].trim() : "凛";
             const pBody = plines.length > 1 ? plines.slice(1).join(" ") : plines[0];
             await sendBarkPush(pTitle, pBody);
-            parsed.choices[0].message.content = msgContent.replace(/\[PUSH\][\s\S]*?\[PUSH\]/g, "").trim();
+            parsed.choices[0].message.content = msgContent.replace(/\[PUSH\][\s\S]*?\[\/?PUSH\]/g, "").trim();
           }
         }
         return reply

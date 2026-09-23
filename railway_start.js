@@ -5,7 +5,6 @@ const path = require("path");
 // Gateway 与 wake-up，才能共享本地/Volume 时间线。这里统一转发退出信号，避免后台子进程悄悄死掉。
 const processes = [
   ["gateway", "server.js"],
-  ["wake-up", "wake_up.js"]
 ].map(([name, file]) => ({
   name,
   child: spawn(process.execPath, [path.join(__dirname, file)], {
